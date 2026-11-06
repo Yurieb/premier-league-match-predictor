@@ -10,15 +10,16 @@ This project analyses four Premier League seasons (2021/22 to 2024/25) using SQL
 
 ## Key result
 
-On 342 matches from the 2024/25 season, **Bet365 clearly beat the model, and the model beat a simple baseline.**
+On 342 matches from the 2024/25 season, **Bet365 clearly beat the model. Updating the model's ratings during the season improved its predictions, but didn't catch Bet365.**
 
 | Predictor | Brier score (lower is better) | Correct picks |
 |---|---|---|
 | Bet365 | **0.5775** | 183 (53.5%) |
-| Poisson model | 0.6237 | 168 (49.1%) |
+| Poisson model, ratings updated during the season | 0.6109 | 176 (51.5%) |
+| Poisson model, original fixed ratings | 0.6237 | 168 (49.1%) |
 | Baseline (training seasons' result rates) | 0.6528 | 144 (42.1%) |
 
-The gap between Bet365 and the model is 4.5 standard errors from zero, so it's very unlikely to be chance alone. The gap between the model and the baseline is 1.8 standard errors, which is suggestive but not conclusive.
+The gap between Bet365 and the original model is 4.5 standard errors from zero, so it's very unlikely to be chance alone. The gap between the original model and the baseline is 1.8 standard errors, which is suggestive but not conclusive. The [upgrade section](#upgrade-ratings-that-update-during-the-season) covers the updated model.
 
 The full analysis is in [football_model.ipynb](football_model.ipynb).
 
@@ -92,6 +93,8 @@ Ipswich had no training data, so its 38 matches were skipped for all predictors,
 
 ## Results
 
+These results and charts are for the original model, with ratings fixed before the test season.
+
 ![Bar chart of Brier scores: Poisson model 0.6237, Bet365 0.5775](images/brier_scores.png)
 
 The model scored between the baseline and the bookmaker. Team ratings based only on past goals seem to add useful information, but they don't match the bookmaker's accuracy.
@@ -108,13 +111,38 @@ Both predictors were well calibrated between about 20% and 50%. The model was **
 
 Bet365 stayed within about 8 percentage points of perfect calibration in every plotted band. The chart only plots bands with at least 20 predictions, because smaller bands are mostly noise. The notebook lists every band, including those left out.
 
-The largest disagreements between the two involved teams such as Tottenham and Nott'm Forest. A likely explanation is that the model's ratings stay fixed for the whole test season, while the bookmaker can react to form, injuries and transfers. This project didn't test that explanation directly.
+The largest disagreements between the two involved teams such as Tottenham and Nott'm Forest. A likely explanation is that the model's ratings stay fixed for the whole test season, while the bookmaker can react to form, injuries and transfers. The upgrade below tests part of this explanation.
 
 The model also expected too many home wins across the 342 matches (47.0%, against 42.1% in reality). That fits with 2024/25 having the lowest home win rate of the four seasons (40.8% across all 380 matches).
 
+## Upgrade: ratings that update during the season
+
+The original model's ratings stay fixed for the whole test season. The updated model recalculates them before each matchday, using every result from earlier dates. A prediction never uses results from its own date or later, which the [tests](tests/test_model.py) check. Both models are scored on the same 342 matches.
+
+| Measure | Original model | Updated model | Bet365 |
+|---|---|---|---|
+| Brier score (lower is better) | 0.6237 | **0.6109** | 0.5775 |
+| Correct picks | 168 (49.1%) | **176 (51.5%)** | 183 (53.5%) |
+| Brier gap to Bet365 | 0.0462 | **0.0334** | n/a |
+
+**What this shows:**
+
+- **It's a real improvement in this season.** Compared match by match, the Brier score improvement is 4.1 standard errors from zero, so it's very unlikely to be chance alone.
+- **Frozen ratings explain only part of the gap.** Updating closed about a quarter of the gap to Bet365. The updated model is still 3.9 standard errors behind.
+- **It now beats the baseline more clearly.** The gap to the baseline is 2.7 standard errors, up from 1.8 for the original model.
+- **Overconfidence reduced, but didn't disappear.** The bands below contain few predictions, so these numbers are less reliable.
+
+| Model's prediction | Original model: how often it happened | Updated model: how often it happened |
+|---|---|---|
+| 60-70% | 49.1% (of 55 predictions) | 54.2% (of 59 predictions) |
+| 70-80% | 61.8% (of 34 predictions) | 64.3% (of 28 predictions) |
+| Under 10% | 17.0% (of 47 predictions) | 11.1% (of 36 predictions) |
+
+This upgrade has no settings to tune, so 2024/25 wasn't used to choose anything. All matches still count equally.
+
 ## Limitations
 
-- **Fixed ratings:** team strengths don't change during the test season, and a 2021 match counts as much as a 2024 match.
+- **Slow-changing ratings:** in the original model, team strengths don't change during the test season. In the updated model they do, but a 2021 match still counts as much as a 2025 match, so ratings react slowly to change.
 - **Goals only:** the model doesn't use injuries, transfers, shot quality or other information a bookmaker can use.
 - **Independent goals:** it assumes one team's goals don't affect the other's, although a losing team may change how it plays. Basic Poisson models like this are also known to tend to underestimate low-scoring draws.
 - **Opponent strength:** ratings don't adjust for the quality of the teams faced.
@@ -126,7 +154,7 @@ The model also expected too many home wins across the 342 matches (47.0%, agains
 
 ## Possible next steps
 
-- Update team ratings after each match, and give recent matches more weight.
+- Give recent matches more weight, choosing the weighting without using the final test season.
 - Add the Dixon-Coles adjustment for low-scoring results.
 - Test on more seasons.
 - Simulate betting against the odds to see whether the model finds any value.
@@ -161,7 +189,7 @@ The tests check the model's calculations and the SQL queries against small examp
 | File | Contents |
 |---|---|
 | [football_model.ipynb](football_model.ipynb) | Full project: data, cleaning, charts, model, evaluation and results |
-| [model.py](model.py) | The model, bookmaker probability and scoring functions |
+| [model.py](model.py) | The original and updated model, bookmaker probability and scoring functions |
 | [sql/analysis.sql](sql/analysis.sql) | The SQL analysis queries, with comments |
 | [tests/](tests/) | Automatic tests for the model functions and SQL queries |
 | [.github/workflows/tests.yml](.github/workflows/tests.yml) | Runs the tests on GitHub |

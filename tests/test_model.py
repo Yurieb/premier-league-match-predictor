@@ -12,6 +12,7 @@ from model import (
     calculate_team_strengths,
     expected_goals,
     most_likely_result,
+    predict_with_updating_ratings,
     remove_margin,
     result_probabilities,
     score_matrix,
@@ -97,6 +98,71 @@ def test_higher_expected_goals_raise_win_chance():
     weaker_home_win, _, _ = result_probabilities(score_matrix(1.0, 1.2))
     stronger_home_win, _, _ = result_probabilities(score_matrix(2.5, 1.2))
     assert stronger_home_win > weaker_home_win
+
+
+@pytest.fixture
+def season():
+    """Two earlier matches, then two on 1 March, then one on 8 March."""
+    return pd.DataFrame(
+        [
+            ("2024-01-01", "A", "B", 3, 1),
+            ("2024-02-01", "B", "A", 1, 1),
+            ("2024-03-01", "A", "B", 2, 0),
+            ("2024-03-01", "B", "A", 0, 2),
+            ("2024-03-08", "A", "B", 1, 1),
+        ],
+        columns=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"],
+    ).assign(Date=lambda table: pd.to_datetime(table["Date"]))
+
+
+def test_updating_ratings_only_use_earlier_dates(season):
+    """The 1 March match should get exactly the same prediction as ratings built from the first two matches."""
+    strengths, avg_home_goals, avg_away_goals = calculate_team_strengths(season.iloc[:2])
+    expected_home_xg, expected_away_xg = expected_goals("A", "B", strengths, avg_home_goals, avg_away_goals)
+
+    prediction = predict_with_updating_ratings(season.iloc[[2]], season)
+
+    assert prediction.loc[2, "home_xg"] == pytest.approx(expected_home_xg)
+    assert prediction.loc[2, "away_xg"] == pytest.approx(expected_away_xg)
+
+
+def test_updating_ratings_ignore_the_match_being_predicted(season):
+    changed = season.copy()
+    changed.loc[2, ["FTHG", "FTAG"]] = [9, 9]
+    original = predict_with_updating_ratings(season.iloc[[2]], season)
+    new = predict_with_updating_ratings(changed.iloc[[2]], changed)
+    pd.testing.assert_frame_equal(original, new)
+
+
+def test_updating_ratings_ignore_other_matches_on_the_same_date(season):
+    changed = season.copy()
+    changed.loc[3, ["FTHG", "FTAG"]] = [9, 9]     # Match 3 is on the same date as match 2
+    original = predict_with_updating_ratings(season.iloc[[2]], season)
+    new = predict_with_updating_ratings(changed.iloc[[2]], changed)
+    pd.testing.assert_frame_equal(original, new)
+
+
+def test_updating_ratings_ignore_future_matches(season):
+    changed = season.copy()
+    changed.loc[4, ["FTHG", "FTAG"]] = [9, 9]     # Match 4 is a week after match 2
+    original = predict_with_updating_ratings(season.iloc[[2]], season)
+    new = predict_with_updating_ratings(changed.iloc[[2]], changed)
+    pd.testing.assert_frame_equal(original, new)
+
+
+def test_updating_ratings_do_change_after_new_results(season):
+    """A big result on 1 March should change the prediction for 8 March."""
+    changed = season.copy()
+    changed.loc[2, ["FTHG", "FTAG"]] = [9, 0]
+    original = predict_with_updating_ratings(season.iloc[[4]], season)
+    new = predict_with_updating_ratings(changed.iloc[[4]], changed)
+    assert new.loc[4, "home_xg"] != pytest.approx(original.loc[4, "home_xg"])
+
+
+def test_updating_ratings_keep_the_original_match_order(season):
+    subset = season.iloc[[4, 2]]    # Deliberately not in date order
+    prediction = predict_with_updating_ratings(subset, season)
+    assert prediction.index.tolist() == [4, 2]
 
 
 def test_remove_margin_matches_hand_calculation():

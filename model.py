@@ -91,6 +91,40 @@ def result_probabilities(matrix):
     return home_win, draw, away_win
 
 
+def predict_with_updating_ratings(matches_to_predict, all_matches):
+    """Predict each match using ratings built only from matches played on earlier dates.
+
+    matches_to_predict: the matches to predict.
+    all_matches: every match available, which can include the matches being predicted.
+
+    Matches on the same date are all predicted together, without using each other's results,
+    because the model wouldn't know any of those results before kick-off.
+
+    Returns a table with one row per match, in the same order as matches_to_predict.
+    """
+    rows = []
+
+    for date, matches_on_date in matches_to_predict.groupby("Date"):
+        # The strict < is what prevents data leakage: nothing from this date or later is used
+        known_results = all_matches[all_matches["Date"] < date]
+        strengths, avg_home_goals, avg_away_goals = calculate_team_strengths(known_results)
+
+        for match in matches_on_date.itertuples():
+            home_xg, away_xg = expected_goals(match.HomeTeam, match.AwayTeam, strengths, avg_home_goals, avg_away_goals)
+            home_win, draw, away_win = result_probabilities(score_matrix(home_xg, away_xg))
+            rows.append({
+                "match": match.Index,
+                "home_xg": home_xg,
+                "away_xg": away_xg,
+                "prob_H": home_win,
+                "prob_D": draw,
+                "prob_A": away_win,
+            })
+
+    # Put the rows back in the original order, labelled with the original row numbers
+    return pd.DataFrame(rows).set_index("match").rename_axis(None).loc[matches_to_predict.index]
+
+
 def remove_margin(home_odds, draw_odds, away_odds):
     """Convert decimal odds to probabilities with the bookmaker's margin removed.
 

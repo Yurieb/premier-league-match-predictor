@@ -1,0 +1,28 @@
+# Runs the tests on GitHub's computers each time code is pushed or a pull request is opened.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+# The tests only need to read the code
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the code
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install the packages
+        run: pip install pandas numpy scipy pytest
+
+      - name: Run the tests
+        run: python -m pytest

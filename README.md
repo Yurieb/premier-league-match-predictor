@@ -1,10 +1,12 @@
 # Premier League Match Analysis and Prediction
 
+[![Tests](https://github.com/Yurieb/premier-league-match-predictor/actions/workflows/tests.yml/badge.svg)](https://github.com/Yurieb/premier-league-match-predictor/actions/workflows/tests.yml)
+
 Can a simple statistical model built on past goals compete with a bookmaker at predicting football results?
 
 This project analyses four Premier League seasons (2021/22 to 2024/25) using SQL and Python, then tests a Poisson model against Bet365's odds on a season the model never saw during training.
 
-**Tools:** Python, pandas, NumPy, SciPy, matplotlib, SQL (SQLite), Jupyter
+**Tools used:** Python, pandas, NumPy, SciPy, matplotlib, SQL (SQLite), Jupyter, pytest, GitHub Actions
 
 ## Key result
 
@@ -36,7 +38,7 @@ The full analysis is in [football_model.ipynb](football_model.ipynb).
 
 ## SQL findings
 
-These cover all 1,520 matches.
+These cover all 1,520 matches. The commented queries are in [sql/analysis.sql](sql/analysis.sql).
 
 **Results**
 
@@ -138,17 +140,31 @@ git clone https://github.com/Yurieb/premier-league-match-predictor.git
 cd premier-league-match-predictor
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-pip install pandas numpy scipy matplotlib jupyter
+pip install pandas numpy scipy matplotlib jupyter pytest
 jupyter notebook football_model.ipynb
 ```
 
 Then choose **Run All Cells**. The notebook needs an internet connection, because it downloads the data from football-data.co.uk each time it runs.
 
+To run the tests, which don't need an internet connection:
+
+```powershell
+python -m pytest
+```
+
+## Tests
+
+The tests check the model's calculations and the SQL queries against small examples with answers worked out by hand. GitHub Actions runs them each time code is pushed, and the badge at the top of this page shows the latest result.
+
 ## Project files
 
 | File | Contents |
 |---|---|
-| [football_model.ipynb](football_model.ipynb) | Full project: data, cleaning, SQL, charts, model and evaluation |
+| [football_model.ipynb](football_model.ipynb) | Full project: data, cleaning, charts, model, evaluation and results |
+| [model.py](model.py) | The model, bookmaker probability and scoring functions |
+| [sql/analysis.sql](sql/analysis.sql) | The SQL analysis queries, with comments |
+| [tests/](tests/) | Automatic tests for the model functions and SQL queries |
+| [.github/workflows/tests.yml](.github/workflows/tests.yml) | Runs the tests on GitHub |
 | [images/](images/) | Saved final charts used in this README |
 
 ## License

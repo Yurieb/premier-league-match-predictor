@@ -4,13 +4,26 @@
 
 Can a simple statistical model built on past goals compete with a bookmaker at predicting football results?
 
-This project analyses four Premier League seasons (2021/22 to 2024/25) using SQL and Python, then tests a Poisson model against Bet365's odds on a season the model never saw during training.
+This project analyses four Premier League seasons (2021/22 to 2024/25) using SQL and Python, then tests a Poisson model against Bet365's odds on seasons the model never saw during training: first 2024/25, then 14 seasons from 2011/12 to 2024/25.
 
 **Tools used:** Python, pandas, NumPy, SciPy, matplotlib, SQL (SQLite), Jupyter, pytest, GitHub Actions
 
 ## Key result
 
-On 342 matches from the 2024/25 season, **Bet365 clearly beat the model. Updating the model's ratings during the season improved its predictions, but didn't catch Bet365.**
+Across **14 test seasons** (2011/12 to 2024/25, 4,364 matches), Bet365 beat the model, and the model beat a simple baseline. Updating the model's ratings during the season improved it in 12 of the 14 seasons.
+
+| Predictor | Brier score (lower is better) | Correct picks |
+|---|---|---|
+| Bet365 | **0.5666** | 55.3% |
+| Poisson model, ratings updated during the season | 0.5827 | 53.5% |
+| Poisson model, original fixed ratings | 0.5902 | 52.5% |
+| Baseline (training seasons' result rates) | 0.6468 | 44.4% |
+
+Each season is predicted using only the three seasons before it. The [season-by-season results](#testing-on-more-seasons) are below.
+
+### First test season: 2024/25
+
+The project was first built and tested on the 2024/25 season. On 342 matches from that season, **Bet365 clearly beat the model. Updating the model's ratings during the season improved its predictions, but didn't catch Bet365.**
 
 | Predictor | Brier score (lower is better) | Correct picks |
 |---|---|---|
@@ -140,6 +153,27 @@ The original model's ratings stay fixed for the whole test season. The updated m
 
 This upgrade has no settings to tune, so 2024/25 wasn't used to choose anything. All matches still count equally.
 
+## Testing on more seasons
+
+A single test season can be misleading, so the whole test was repeated on every season from 2011/12 to 2024/25. Each test season is predicted using only the three seasons before it, and all four predictors are scored on the same matches.
+
+![Line chart of Brier scores by test season for the baseline, original model, updated model and Bet365](images/brier_by_season.png)
+
+| Comparison | Seasons won | Average Brier gap | Standard errors from zero |
+|---|---|---|---|
+| Updated model beat the original model | 12 of 14 | 0.0075 | 8.1 |
+| Bet365 beat the updated model | 13 of 14 | 0.0161 | 7.5 |
+| Original model beat the baseline | 14 of 14 | 0.0566 | 12.5 |
+
+**What this shows:**
+
+- **Updating the ratings reliably helps,** but by less than 2024/25 suggested. Its improvement that season (0.0128) was larger than usual.
+- **Bet365 is consistently better.** The one exception, 2019/20, was partly played without crowds, so it shouldn't be read as the model beating the market.
+- **The model clearly adds value over the baseline.** In 2024/25 alone this was only suggestive (1.8 standard errors), but across 14 seasons it's clear.
+- **Seasons without crowds don't change the conclusions.** From June 2020, the end of 2019/20 was played without crowds, and so was most of 2020/21. Leaving both seasons out gives almost the same gaps.
+
+In each season, matches involving promoted teams with no data from the three previous seasons are skipped, which is between 38 and 108 matches per season. The standard errors treat every match as independent, so they may be slightly too small. The season-by-season counts don't depend on that assumption.
+
 ## Limitations
 
 - **Slow-changing ratings:** in the original model, team strengths don't change during the test season. In the updated model they do, but a 2021 match still counts as much as a 2025 match, so ratings react slowly to change.
@@ -147,8 +181,9 @@ This upgrade has no settings to tune, so 2024/25 wasn't used to choose anything.
 - **Independent goals:** it assumes one team's goals don't affect the other's, although a losing team may change how it plays. Basic Poisson models like this are also known to tend to underestimate low-scoring draws.
 - **Opponent strength:** ratings don't adjust for the quality of the teams faced.
 - **Small samples:** some teams have only 38 training matches, which makes their ratings less reliable.
-- **One test season:** results may differ in other seasons, and the standard errors treat matches as independent.
-- **Promoted teams:** teams with no training data can't be predicted, so the comparison leaves out Ipswich's matches.
+- **Independent matches:** the standard errors treat matches as independent, which may make them slightly too small.
+- **Promoted teams:** teams with no data from the three previous seasons can't be predicted, so their matches are left out. In 2024/25, these were Ipswich's matches.
+- **Detailed analysis on one season:** the calibration and disagreement analysis covers only 2024/25. The multi-season test compares Brier scores only.
 - **Odds used:** these are Bet365's pre-closing odds. Closing odds, set nearer kick-off, are usually considered more accurate, so they may be a harder benchmark.
 - **Margin removal:** the proportional method assumes the margin is spread evenly across the three outcomes.
 
@@ -156,7 +191,6 @@ This upgrade has no settings to tune, so 2024/25 wasn't used to choose anything.
 
 - Give recent matches more weight, choosing the weighting without using the final test season.
 - Add the Dixon-Coles adjustment for low-scoring results.
-- Test on more seasons.
 - Simulate betting against the odds to see whether the model finds any value.
 
 ## How to run it
@@ -188,8 +222,8 @@ The tests check the model's calculations and the SQL queries against small examp
 
 | File | Contents |
 |---|---|
-| [football_model.ipynb](football_model.ipynb) | Full project: data, cleaning, charts, model, evaluation and results |
-| [model.py](model.py) | The original and updated model, bookmaker probability and scoring functions |
+| [football_model.ipynb](football_model.ipynb) | Full project: data, cleaning, charts, model, evaluation and multi-season results |
+| [model.py](model.py) | The original and updated model, data loading, bookmaker probability, scoring and season testing functions |
 | [sql/analysis.sql](sql/analysis.sql) | The SQL analysis queries, with comments |
 | [tests/](tests/) | Automatic tests for the model functions and SQL queries |
 | [.github/workflows/tests.yml](.github/workflows/tests.yml) | Runs the tests on GitHub |

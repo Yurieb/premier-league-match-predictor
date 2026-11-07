@@ -11,6 +11,52 @@ from scipy.stats import poisson
 
 MAX_GOALS = 10   # The score grid covers each team scoring from 0 to 10 goals
 
+COLUMNS = ["Season", "Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR", "B365H", "B365D", "B365A"]
+
+# The predictors compared when testing a season: {column prefix: name shown in tables}
+PREDICTORS = {
+    "book": "Bet365",
+    "updated": "Updated model",
+    "original": "Original model",
+    "base": "Baseline",
+}
+
+
+def season_label(start_year):
+    """Turn a season's starting year into its label, for example 2024 becomes "2024/25"."""
+    return f"{start_year}/{(start_year + 1) % 100:02d}"
+
+
+def clean_season(raw, label):
+    """Keep the needed columns from one season's raw file, fix the dates and sort by date.
+
+    Older files write dates as dd/mm/yy and newer ones as dd/mm/yyyy, so the format is chosen per file.
+    """
+    season = raw.dropna(subset=["HomeTeam"]).copy()    # Some files end with a blank row
+    season["Season"] = label
+    season = season[COLUMNS]
+
+    date_lengths = set(season["Date"].astype(str).str.len())
+    if date_lengths == {8}:
+        date_format = "%d/%m/%y"
+    elif date_lengths == {10}:
+        date_format = "%d/%m/%Y"
+    else:
+        raise ValueError(f"{label}: unexpected date formats with lengths {date_lengths}")
+    season["Date"] = pd.to_datetime(season["Date"], format=date_format)
+
+    # A blank row makes pandas read goals as decimals, so convert them back to whole numbers
+    season = season.astype({"FTHG": int, "FTAG": int})
+
+    return season.sort_values("Date").reset_index(drop=True)
+
+
+def load_season(start_year):
+    """Download and clean one Premier League season from football-data.co.uk."""
+    code = f"{start_year % 100:02d}{(start_year + 1) % 100:02d}"    # 2024 becomes "2425"
+    raw = pd.read_csv(f"https://www.football-data.co.uk/mmz4281/{code}/E0.csv", encoding="latin-1")
+    return clean_season(raw, season_label(start_year))
+
 
 def load_queries(path):
     """Read a .sql file and return its queries as a dictionary of {name: query}.
@@ -123,6 +169,53 @@ def predict_with_updating_ratings(matches_to_predict, all_matches):
 
     # Put the rows back in the original order, labelled with the original row numbers
     return pd.DataFrame(rows).set_index("match").rename_axis(None).loc[matches_to_predict.index]
+
+
+def evaluate_test_season(training, test):
+    """Predict one test season with every predictor, and score each prediction.
+
+    training: the matches the models learn from (all played before the test season).
+    test: the season being predicted.
+
+    Matches involving a team with no training data are skipped, because neither model can rate that team.
+    Returns one row per predicted match, with each predictor's probabilities, Brier score and pick.
+    """
+    known_teams = set(training["HomeTeam"]) | set(training["AwayTeam"])
+    is_predictable = test["HomeTeam"].isin(known_teams) & test["AwayTeam"].isin(known_teams)
+    results = test[is_predictable].copy()
+
+    # Original model: ratings fixed before the season starts
+    strengths, avg_home_goals, avg_away_goals = calculate_team_strengths(training)
+    original = []
+    for match in results.itertuples():
+        home_xg, away_xg = expected_goals(match.HomeTeam, match.AwayTeam, strengths, avg_home_goals, avg_away_goals)
+        original.append(result_probabilities(score_matrix(home_xg, away_xg)))
+    results[["original_H", "original_D", "original_A"]] = pd.DataFrame(original, index=results.index)
+
+    # Updated model: ratings recalculated before each matchday, from earlier results only.
+    # The whole test season is passed in, including unpredictable teams' matches, because they really happened.
+    updated = predict_with_updating_ratings(results, pd.concat([training, test], ignore_index=True))
+    results["updated_H"] = updated["prob_H"]
+    results["updated_D"] = updated["prob_D"]
+    results["updated_A"] = updated["prob_A"]
+
+    # Bet365, with the margin removed
+    results["book_H"], results["book_D"], results["book_A"], _ = remove_margin(
+        results["B365H"], results["B365D"], results["B365A"]
+    )
+
+    # Baseline: the training seasons' result rates, the same for every match
+    rates = training["FTR"].value_counts(normalize=True)
+    for result in ["H", "D", "A"]:
+        results[f"base_{result}"] = rates.get(result, 0.0)
+
+    # Score every predictor in the same way
+    for prefix in PREDICTORS:
+        prob_home, prob_draw, prob_away = results[f"{prefix}_H"], results[f"{prefix}_D"], results[f"{prefix}_A"]
+        results[f"brier_{prefix}"] = brier_per_match(prob_home, prob_draw, prob_away, results["FTR"])
+        results[f"pick_{prefix}"] = most_likely_result(prob_home, prob_draw, prob_away)
+
+    return results
 
 
 def remove_margin(home_odds, draw_odds, away_odds):

@@ -8,8 +8,11 @@ import pytest
 
 from model import (
     MAX_GOALS,
+    PREDICTORS,
     brier_per_match,
     calculate_team_strengths,
+    clean_season,
+    evaluate_test_season,
     expected_goals,
     most_likely_result,
     predict_with_updating_ratings,
@@ -163,6 +166,105 @@ def test_updating_ratings_keep_the_original_match_order(season):
     subset = season.iloc[[4, 2]]    # Deliberately not in date order
     prediction = predict_with_updating_ratings(subset, season)
     assert prediction.index.tolist() == [4, 2]
+
+
+def raw_season(dates):
+    """A raw file in the same layout as football-data.co.uk, with an extra unused column."""
+    return pd.DataFrame({
+        "Div": "E0",
+        "Date": dates,
+        "HomeTeam": ["A", "B"],
+        "AwayTeam": ["B", "A"],
+        "FTHG": [2, 0],
+        "FTAG": [1, 0],
+        "FTR": ["H", "D"],
+        "B365H": [1.9, 2.5],
+        "B365D": [3.5, 3.2],
+        "B365A": [4.0, 2.9],
+    })
+
+
+def test_clean_season_reads_two_digit_years():
+    cleaned = clean_season(raw_season(["16/08/08", "23/08/08"]), "2008/09")
+    assert cleaned["Date"].tolist() == [pd.Timestamp("2008-08-16"), pd.Timestamp("2008-08-23")]
+
+
+def test_clean_season_reads_four_digit_years_day_first():
+    cleaned = clean_season(raw_season(["05/08/2022", "13/08/2022"]), "2022/23")
+    assert cleaned["Date"].iloc[0] == pd.Timestamp("2022-08-05")    # 5 August, not 8 May
+
+
+def test_clean_season_rejects_mixed_date_formats():
+    with pytest.raises(ValueError):
+        clean_season(raw_season(["16/08/08", "23/08/2008"]), "2008/09")
+
+
+def test_clean_season_keeps_needed_columns_drops_blank_rows_and_sorts():
+    raw = raw_season(["23/08/08", "16/08/08"])
+    raw = pd.concat([raw, pd.DataFrame({"Div": [None]})], ignore_index=True)   # A blank row at the end
+    cleaned = clean_season(raw, "2008/09")
+    assert len(cleaned) == 2
+    assert cleaned.columns.tolist()[:2] == ["Season", "Date"]
+    assert "Div" not in cleaned.columns
+    assert cleaned["Season"].unique().tolist() == ["2008/09"]
+    assert cleaned["Date"].is_monotonic_increasing
+    assert cleaned["FTHG"].dtype == int     # Still whole numbers despite the blank row
+
+
+@pytest.fixture
+def training_and_test():
+    """Two training matches between A and B, then a test season where C (newly promoted) also plays."""
+    training = pd.DataFrame(
+        [
+            ("2023-01-01", "A", "B", 3, 1, "H", 1.5, 4.0, 6.0),
+            ("2023-02-01", "B", "A", 1, 1, "D", 2.5, 3.2, 2.9),
+        ],
+        columns=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR", "B365H", "B365D", "B365A"],
+    )
+    test = pd.DataFrame(
+        [
+            ("2024-01-01", "A", "B", 2, 0, "H", 1.6, 4.0, 5.0),
+            ("2024-01-01", "C", "A", 0, 1, "A", 3.0, 3.5, 2.2),    # C has no training data
+            ("2024-01-08", "B", "A", 0, 2, "A", 2.4, 3.3, 2.8),
+        ],
+        columns=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR", "B365H", "B365D", "B365A"],
+    )
+    for table in (training, test):
+        table["Date"] = pd.to_datetime(table["Date"])
+    return training, test
+
+
+def test_evaluate_test_season_skips_teams_with_no_training_data(training_and_test):
+    results = evaluate_test_season(*training_and_test)
+    assert results.index.tolist() == [0, 2]
+
+
+def test_evaluate_test_season_scores_every_predictor(training_and_test):
+    results = evaluate_test_season(*training_and_test)
+    for prefix in PREDICTORS:
+        total = results[[f"{prefix}_H", f"{prefix}_D", f"{prefix}_A"]].sum(axis=1)
+        assert total.tolist() == pytest.approx([1, 1])
+        assert results[f"brier_{prefix}"].notna().all()
+        assert results[f"pick_{prefix}"].isin(["H", "D", "A"]).all()
+
+
+def test_evaluate_test_season_baseline_uses_training_rates(training_and_test):
+    results = evaluate_test_season(*training_and_test)
+    assert results["base_H"].tolist() == [0.5, 0.5]     # 1 home win in 2 training matches
+    assert results["base_D"].tolist() == [0.5, 0.5]
+    assert results["base_A"].tolist() == [0.0, 0.0]
+
+
+def test_evaluate_test_season_models_agree_before_any_new_results(training_and_test):
+    """On the first test date, no new results are known, so both models should match exactly."""
+    results = evaluate_test_season(*training_and_test)
+    assert results.loc[0, "updated_H"] == pytest.approx(results.loc[0, "original_H"])
+
+
+def test_evaluate_test_season_updated_model_learns_from_the_test_season(training_and_test):
+    """By 8 January, the 1 January results are known, including the match with C."""
+    results = evaluate_test_season(*training_and_test)
+    assert results.loc[2, "updated_H"] != pytest.approx(results.loc[2, "original_H"])
 
 
 def test_remove_margin_matches_hand_calculation():
